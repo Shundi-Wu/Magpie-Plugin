@@ -3,7 +3,7 @@
 //
 // Sign in with `magpie plugin login capi`: the key is the HMAC secret and
 // the integration id is asked next. Options (magpie plugin options
-// magpie-capi-hmac '{…}'): integrationId, baseURL, apiVersion, dropBetas.
+// magpie-capi-hmac '{…}'): baseURL, apiVersion, dropBetas.
 
 import { createHmac, randomUUID } from "node:crypto"
 
@@ -25,9 +25,10 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
     chat: { npm: "@ai-sdk/openai-compatible", api: base }, // → /chat/completions
   }
 
+  // the integration id asked at sign-in
   const integrationOf = (auth) => {
-    const id = auth?.metadata?.integrationId || options.integrationId || process.env.CAPI_INTEGRATION_ID
-    if (!id) throw new Error("capi: no integration id; sign in again or set the plugin's integrationId option")
+    const id = auth?.metadata?.integrationId
+    if (!id) throw new Error("capi: no integration id; sign in again")
     return id
   }
 
@@ -65,7 +66,6 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
           [TEMPLATE.anthropic]: {
             name: "Claude Opus 5.5",
             provider: apis.anthropic,
-            limit: { context: 328000, output: 128000 },
             reasoning: true,
             tool_call: true,
             attachment: true,
@@ -75,7 +75,6 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
           [TEMPLATE.responses]: {
             name: "GPT-5.5",
             provider: apis.responses,
-            limit: { context: 400000, output: 128000 },
             reasoning: true,
             tool_call: true,
             attachment: true,
@@ -85,7 +84,6 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
           [TEMPLATE.chat]: {
             name: "Kimi K3",
             provider: apis.chat,
-            limit: { context: 1048576, output: 131072 },
             reasoning: true,
             tool_call: true,
             attachment: true,
@@ -131,8 +129,12 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
       id: PROVIDER,
       async models(provider, { auth } = {}) {
         if (auth?.type !== "api") return provider.models
-        const res = await fetch(`${base}/models`, { headers: sign(new Headers({ accept: "application/json" }), auth) })
-        if (!res.ok) return provider.models // magpie keeps the list it had
+        const res = await fetch(`${base}/models`, {
+          headers: sign(new Headers({ accept: "application/json" }), auth),
+          signal: AbortSignal.timeout(30000),
+        }).catch(() => null)
+        // unanswered or refused: magpie keeps the list it had
+        if (!res?.ok) return provider.models
         const { data } = await res.json()
         const models = {}
         for (const m of data ?? []) {
@@ -151,10 +153,10 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
             name: m.name ?? m.id,
             api: { ...template.api, id: m.id, url: apis[kind].api, npm: apis[kind].npm },
             limit: {
-              // the window, not max_prompt_tokens: /v1/messages takes prompts
-              // past the latter (Opus 5.5 answers ~320K of its 200K "max
-              // prompt"), and magpie tells agents input ahead of context
-              context: limits.max_context_window_tokens ?? 128000,
+              // max_prompt_tokens, not the window: CAPI always lets at least
+              // this much through, and for some models no more (GPT-5.2-Codex
+              // stops at 272K of its 400K window)
+              context: limits.max_prompt_tokens ?? 128000,
               output: limits.max_output_tokens ?? 4096,
             },
             capabilities: {
