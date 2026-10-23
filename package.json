@@ -1,6 +1,6 @@
 {
   "name": "magpie-capi-hmac",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "magpie / OpenCode provider plugin: the GitHub Copilot API (CAPI) signed with an integration's HMAC secret",
   "type": "module",
   "main": "./index.mjs",

@@ -15,6 +15,33 @@ const UNSUPPORTED_BETAS = ["advisor-tool-2026-03-01"]
 // one model per API, so provider.models has a template of each
 const TEMPLATE = { anthropic: "claude-opus-5.5", responses: "gpt-5.5", chat: "kimi-k3" }
 
+// The prompt tokens CAPI lets through, measured (2026-10-23) by sending each model a
+// prompt over its limit: the refusal names it. /models undersells most of them
+// (claude-opus-5.5 lists max_prompt_tokens 200K and max_context_window_tokens 328K,
+// yet takes 1M), while others stop at max_prompt_tokens, the default for the rest.
+const MEASURED_CONTEXT = {
+  "claude-fable-5": 1000000,
+  "claude-fable-5.1": 1000000,
+  "claude-haiku-4.5": 200000,
+  "claude-haiku-5.5": 1000000,
+  "claude-opus-4.6": 1000000,
+  "claude-opus-4.8": 1000000,
+  "claude-opus-4.8-fast": 1000000,
+  "claude-opus-5": 1000000,
+  "claude-opus-5.5": 1000000,
+  "claude-sonnet-5": 1000000,
+  "claude-sonnet-5.5": 1000000,
+  "gpt-5.6-luna": 922000,
+  "gpt-5.6-sol": 922000,
+  "gpt-5.6-terra": 922000,
+  "gpt-6-astra": 1050000,
+  "gpt-6-luna": 872000,
+  "gpt-6-sol": 872000,
+  "gpt-6.1-sol": 922000,
+  "grok-4.6": 372000,
+  "grok-4.7": 372000,
+}
+
 export const CapiHmacPlugin = async (_input, options = {}) => {
   const base = (options.baseURL ?? "https://api.githubcopilot.com").replace(/\/+$/, "")
   const apiVersion = options.apiVersion ?? "2025-10-01"
@@ -153,10 +180,10 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
             name: m.name ?? m.id,
             api: { ...template.api, id: m.id, url: apis[kind].api, npm: apis[kind].npm },
             limit: {
-              // max_prompt_tokens, not the window: CAPI always lets at least
-              // this much through, and for some models no more (GPT-5.2-Codex
-              // stops at 272K of its 400K window)
-              context: limits.max_prompt_tokens ?? 128000,
+              // what CAPI was measured to let through, else max_prompt_tokens, not
+              // the window: CAPI always lets at least this much through, and for
+              // some models no more (GPT-5.2-Codex stops at 272K of its 400K window)
+              context: MEASURED_CONTEXT[m.id] ?? limits.max_prompt_tokens ?? 128000,
               output: limits.max_output_tokens ?? 4096,
             },
             capabilities: {
