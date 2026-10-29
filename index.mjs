@@ -4,10 +4,12 @@
 // Sign in with `magpie plugin login capi`: the key is the HMAC secret and
 // the integration id is asked next. Options (magpie plugin options
 // magpie-capi-hmac '{…}'): baseURL, apiVersion, dropBetas.
+//
+// A second provider, capi-search, serves the Responses models alone and says
+// they search the web by themselves, so magpie can name one to search for
+// capi's models. Sign it in the same way: `magpie plugin login capi-search`.
 
 import { createHmac, randomUUID } from "node:crypto"
-
-const PROVIDER = "capi"
 
 // betas CAPI turns away with a 400
 const UNSUPPORTED_BETAS = ["advisor-tool-2026-03-01"]
@@ -42,7 +44,8 @@ const MEASURED_CONTEXT = {
   "grok-4.7": 372000,
 }
 
-export const CapiHmacPlugin = async (_input, options = {}) => {
+// a plugin serving provider PROVIDER: the models CAPI serves on the APIs in kinds
+const capiPlugin = (PROVIDER, { name, searches = false, kinds = ["anthropic", "responses", "chat"] }) => async (_input, options = {}) => {
   const base = (options.baseURL ?? "https://api.githubcopilot.com").replace(/\/+$/, "")
   const apiVersion = options.apiVersion ?? "2025-10-01"
   const dropBetas = new Set([...UNSUPPORTED_BETAS, ...(options.dropBetas ?? [])])
@@ -55,7 +58,7 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
   // the integration id asked at sign-in
   const integrationOf = (auth) => {
     const id = auth?.metadata?.integrationId
-    if (!id) throw new Error("capi: no integration id; sign in again")
+    if (!id) throw new Error(`${PROVIDER}: no integration id; sign in again`)
     return id
   }
 
@@ -85,39 +88,43 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
   return {
     config: async (cfg) => {
       cfg.provider ??= {}
+      const templates = {
+        anthropic: {
+          name: "Claude Opus 5.5",
+          provider: apis.anthropic,
+          reasoning: true,
+          tool_call: true,
+          attachment: true,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} },
+        },
+        responses: {
+          name: "GPT-5.5",
+          provider: apis.responses,
+          reasoning: true,
+          tool_call: true,
+          attachment: true,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: { none: {}, low: {}, medium: {}, high: {}, xhigh: {} },
+        },
+        chat: {
+          name: "Kimi K3",
+          provider: apis.chat,
+          reasoning: true,
+          tool_call: true,
+          attachment: true,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: { low: {}, high: {}, max: {} },
+        },
+      }
       cfg.provider[PROVIDER] ??= {
-        name: "Copilot API (HMAC)",
+        name,
         npm: apis.responses.npm,
         api: apis.responses.api,
-        models: {
-          [TEMPLATE.anthropic]: {
-            name: "Claude Opus 5.5",
-            provider: apis.anthropic,
-            reasoning: true,
-            tool_call: true,
-            attachment: true,
-            modalities: { input: ["text", "image"], output: ["text"] },
-            variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} },
-          },
-          [TEMPLATE.responses]: {
-            name: "GPT-5.5",
-            provider: apis.responses,
-            reasoning: true,
-            tool_call: true,
-            attachment: true,
-            modalities: { input: ["text", "image"], output: ["text"] },
-            variants: { none: {}, low: {}, medium: {}, high: {}, xhigh: {} },
-          },
-          [TEMPLATE.chat]: {
-            name: "Kimi K3",
-            provider: apis.chat,
-            reasoning: true,
-            tool_call: true,
-            attachment: true,
-            modalities: { input: ["text", "image"], output: ["text"] },
-            variants: { low: {}, high: {}, max: {} },
-          },
-        },
+        // magpie's own field: a client's web_search goes to CAPI as sent, and
+        // magpie may name one of these models to search for other providers'
+        searches,
+        models: Object.fromEntries(kinds.map((k) => [TEMPLATE[k], templates[k]])),
       }
     },
 
@@ -168,6 +175,7 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
           const caps = m.capabilities ?? {}
           if (caps.type !== "chat" || m.model_picker_enabled === false) continue
           const kind = apiOf(m.supported_endpoints)
+          if (!kinds.includes(kind)) continue
           const template = provider.models?.[TEMPLATE[kind]] ?? {}
           const limits = caps.limits ?? {}
           const supports = caps.supports ?? {}
@@ -209,6 +217,18 @@ export const CapiHmacPlugin = async (_input, options = {}) => {
     },
   }
 }
+
+// every model CAPI serves the integration
+export const CapiHmacPlugin = capiPlugin("capi", { name: "Copilot API (HMAC)" })
+
+// the Responses models alone, whose web_search tool CAPI answers (measured
+// 2026-10-29 on gpt-*, grok and mai), while Claude's /v1/messages turns it away
+// with a 400: so magpie can name one of these to search for capi's Claude
+export const CapiSearchPlugin = capiPlugin("capi-search", {
+  name: "Copilot API search (HMAC)",
+  searches: true,
+  kinds: ["responses"],
+})
 
 // the API a model is served on, from CAPI's supported_endpoints
 function apiOf(endpoints) {
